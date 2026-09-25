@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "build:questions": "node scripts/build-questions.ts",
     "sync:functions": "node scripts/sync-functions.ts",
-    "build:og": "node scripts/og-image.ts"
+    "build:og": "node scripts/og-image.ts",
+    "smoke": "node scripts/smoke-multiplayer.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.1",
