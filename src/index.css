@@ -250,7 +250,7 @@ button:disabled {
   background: transparent;
   border: 0;
   padding: 8px 16px;
-  font-family: var(--mono);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -765,9 +765,6 @@ a.mode:hover {
   cursor: default;
 }
 
-.segmented button {
-  text-transform: capitalize;
-}
 
 /* ---------- Lobby ---------- */
 .lobby {

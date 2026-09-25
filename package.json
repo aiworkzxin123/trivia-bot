@@ -13,7 +13,8 @@
     "build:questions": "node scripts/build-questions.ts",
     "sync:functions": "node scripts/sync-functions.ts",
     "build:og": "node scripts/og-image.ts",
-    "smoke": "node scripts/smoke-multiplayer.ts"
+    "smoke": "node scripts/smoke-multiplayer.ts",
+    "screenshots": "node scripts/screenshots.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.1",
@@ -30,6 +31,7 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
+    "playwright-core": "^1.63.0",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"

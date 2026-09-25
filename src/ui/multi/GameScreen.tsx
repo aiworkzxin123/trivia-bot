@@ -171,7 +171,7 @@ function Lobby({ live }: { live: LiveGame }) {
               <div className="segmented">
                 {(['easy', 'medium', 'hard'] as const).map((d) => (
                   <button key={d} type="button" aria-pressed={settings.difficulty === d} disabled={!isHost} onClick={() => update({ difficulty: d })}>
-                    {d}
+                    {d.charAt(0).toUpperCase() + d.slice(1)}
                   </button>
                 ))}
               </div>

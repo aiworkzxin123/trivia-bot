@@ -89,7 +89,7 @@ export function Setup({ categories, settings, onChange, onStart, busy, error }: 
             <div className="segmented">
               {(['easy', 'medium', 'hard'] as const).map((d) => (
                 <button key={d} type="button" aria-pressed={settings.difficulty === d} onClick={() => onChange({ ...settings, difficulty: d })}>
-                  {d}
+                  {d.charAt(0).toUpperCase() + d.slice(1)}
                 </button>
               ))}
             </div>
