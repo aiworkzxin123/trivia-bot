@@ -168,7 +168,7 @@ All checking happens in an Edge Function, so the correct answer never reaches pl
    - Answer checking (`qb-answer-checker` plus our own rules) and speed scoring, built test-first.
    - 3,666 Open Trivia DB questions kept; every one accepts its own answer.
    - Single-player classic mode deployed.
-2. **Multiplayer** ✅ *built 2026-09-25; goes live once the Supabase project is created*
+2. **Multiplayer** ✅ *live 2026-09-25 (Supabase project in Singapore, ap-southeast-1)*
    - Game service with every server-side rule, tested with simulated players (`src/server/service.test.ts`).
    - Supabase schema with read-only access rules, one server function, setup script (`scripts/setup-supabase.sh`), daily keep-alive and cleanup.
    - Lobby, live question with server-synced timer, live feed, host override, leaderboard.
@@ -179,11 +179,12 @@ All checking happens in an Edge Function, so the correct answer never reaches pl
    - Up to 5 interests per player; the host sees categories 2+ players share (names only); interests deleted when the game starts.
 5. **Competition mode** ✅ *done 2026-09-25*
    - QBReader tossups revealed word by word, +200 power bonus, −50 wrong, 1 try, in solo and multiplayer; set credit on reveal; About page.
-6. **Hardening** 🟡 *mostly done*
+6. **Hardening** 🟡 *nearly done*
    - ✅ Security review (see below) and fixes.
    - ✅ Rate limits: 10 games per host per hour, 10 answers per question, 2 "more specific?" hints, 50 players, 60 anonymous sign-ins per IP per hour.
    - ✅ Accessibility basics: labels, live regions, visible focus, reduced motion, 16px+ inputs so phones don't zoom.
-   - ⏳ Browser end-to-end tests with several players, once the Supabase project exists.
+   - ✅ End-to-end check against the real backend (`npm run smoke`, 39 checks): a host and a guest play classic and tossup games, including simultaneous answers and the access rules.
+   - ⏳ Hands-on test of the live screens with two devices.
 
 ### Security decisions (from the Phase 6 review)
 
