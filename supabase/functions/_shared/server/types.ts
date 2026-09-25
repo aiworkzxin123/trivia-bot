@@ -41,7 +41,11 @@ export interface PlayerRow {
   joinedAt: number
 }
 
-/** What players can read. The answer stays in QuestionSecret until the reveal. */
+/**
+ * What players can read. For tossups, text stays empty until the reveal and the
+ * words arrive through timed chunks instead. The answer and the tournament name
+ * (which would make the question easy to look up) are copied in at the reveal.
+ */
 export interface QuestionRow {
   id: string
   gameId: string
@@ -51,12 +55,25 @@ export interface QuestionRow {
   difficulty: string | null
   sourceNote: string | null
   limitMs: number
+  /** Tossups only: number of words, and words before the power mark. */
+  wordCount: number | null
+  powerIndex: number | null
   revealedAnswer: string | null
 }
 
+/** Readable only by the server until the reveal. */
 export interface QuestionSecret {
   answer: string
   answerline: string
+  fullText: string
+  sourceNote: string | null
+}
+
+/** A few words of a tossup, readable once offsetMs has passed since the question started. */
+export interface QuestionChunk {
+  idx: number
+  offsetMs: number
+  text: string
 }
 
 export type AnswerVerdict = 'correct' | 'prompt' | 'wrong' | 'late' | 'overridden'
@@ -83,4 +100,26 @@ export interface FeedEvent {
   points: number
 }
 
-export type NewQuestion = Omit<QuestionRow, 'id' | 'revealedAnswer'> & QuestionSecret
+export type NewQuestion = Omit<QuestionRow, 'id' | 'revealedAnswer' | 'sourceNote'> & QuestionSecret & { chunks: QuestionChunk[] }
+
+export interface RecordAnswerInput {
+  gameId: string
+  questionId: string
+  playerId: string
+  given: string
+  elapsedMs: number
+  verdict: 'correct' | 'wrong' | 'prompt' | 'late'
+  /** Points for this verdict, not counting the first-correct bonus. */
+  points: number
+  /** Points if a prompt is turned into a wrong answer. */
+  wrongPoints: number
+  /** Added when this is the first correct answer to the question. */
+  firstCorrectBonus: number
+  maxAttempts: number
+  maxSubmits: number
+  maxPrompts: number
+}
+
+export type RecordAnswerResult =
+  | { ok: true; verdict: RecordAnswerInput['verdict']; points: number; wrongCount: number }
+  | { ok: false; reason: 'done' | 'too_many' }

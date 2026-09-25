@@ -52,12 +52,21 @@ export function About() {
         <ul>
           <li>You play without an account. Your browser gets an anonymous ID so the game knows which answers are yours.</li>
           <li>
-            Interests you tick are only used to suggest categories. Other players see category names, never who picked what, and interests are
-            deleted when the game ends.
+            Interests you tick (up to 5) are only used to suggest categories to the host, who sees category names, never who picked what.
+            Interests are deleted as soon as the game starts.
           </li>
           <li>Games, names and answers are deleted a day after the game was created.</li>
           <li>Trivia Bot doesn't connect to your Instagram or Strava account. You invite followers by sharing the game link.</li>
         </ul>
+      </section>
+
+      <section>
+        <h2>Fair play</h2>
+        <p>
+          Answers stay on the server until each question is revealed, and quiz bowl questions arrive a few words at a time. Both question banks are
+          public, though, so someone determined could look answers up. After each question everyone sees what everyone typed, and the host can
+          accept answers, so it works best with people you know.
+        </p>
       </section>
     </article>
   )

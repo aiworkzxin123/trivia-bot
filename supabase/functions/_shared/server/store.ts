@@ -8,9 +8,13 @@ import type {
   PlayerRow,
   QuestionRow,
   QuestionSecret,
+  RecordAnswerInput,
+  RecordAnswerResult,
 } from './types.ts'
 
 export class CodeTakenError extends Error {}
+export class NicknameTakenError extends Error {}
+export class GameFullError extends Error {}
 
 /** Storage behind the game service: Supabase in production, memory in tests. */
 export interface GameStore {
@@ -28,21 +32,26 @@ export interface GameStore {
 
   listPlayers(gameId: string): Promise<PlayerRow[]>
   getPlayer(gameId: string, userId: string): Promise<PlayerRow | null>
-  insertPlayer(player: Omit<PlayerRow, 'id'>): Promise<PlayerRow>
+  /** Throws NicknameTakenError or GameFullError; both are enforced by the database. */
+  insertPlayer(player: Omit<PlayerRow, 'id'>, maxPlayers: number): Promise<PlayerRow>
   updatePlayer(id: string, patch: Partial<Pick<PlayerRow, 'rttMs' | 'nickname'>>): Promise<void>
-  /** Adds to a player's score in one step, so concurrent answers can't overwrite each other. */
-  addScore(playerId: string, delta: number): Promise<void>
 
   insertQuestions(questions: NewQuestion[]): Promise<void>
+  /** The full question including its secrets. Server only. */
   getQuestion(gameId: string, idx: number): Promise<(QuestionRow & QuestionSecret) | null>
-  revealQuestion(questionId: string, answer: string): Promise<void>
+  /** Makes the answer, full text and source readable to players. */
+  revealQuestion(questionId: string, reveal: { answer: string; text: string; sourceNote: string | null }): Promise<void>
 
   listAnswers(questionId: string): Promise<AnswerRow[]>
   getAnswer(id: string): Promise<AnswerRow | null>
-  insertAnswer(answer: Omit<AnswerRow, 'id' | 'createdAt'>): Promise<AnswerRow>
-  updateAnswer(id: string, patch: Partial<Pick<AnswerRow, 'verdict' | 'points'>>): Promise<void>
-  /** True for exactly one player per question: the first to answer correctly. */
-  claimFirstCorrect(questionId: string, playerId: string): Promise<boolean>
+  /**
+   * Checks the attempt limits, records the answer, claims the first-correct
+   * bonus and updates the score as one step, so answers sent at the same
+   * moment can't get past the limits or score twice.
+   */
+  recordAnswer(input: RecordAnswerInput): Promise<RecordAnswerResult>
+  /** Accepts a wrong answer in one step. False if it was already accepted or the player already got it right. */
+  overrideAnswer(answerId: string, points: number): Promise<boolean>
 
   insertFeed(event: FeedEvent): Promise<void>
 

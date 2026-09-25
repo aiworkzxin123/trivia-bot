@@ -142,7 +142,7 @@ All checking happens in an Edge Function, so the correct answer never reaches pl
 4. **Privacy:**
    - The lobby shows **category names only**, with no counts and no names.
    - A category is suggested only when **at least 2 players** share it.
-   - Interests are **deleted when the game ends**.
+   - Interests are **deleted when the game starts**, and each player can pick at most 5.
 5. Players still choose or vote on the categories themselves. Suggestions are only a starting point.
 
 ---
@@ -164,26 +164,34 @@ All checking happens in an Edge Function, so the correct answer never reaches pl
 0. **Check and set up** ✅ *done 2026-09-25*
    - Platform facts checked ([research notes](docs/research/phase0-platform-facts.md)); plan updated.
    - Vite + React + TS app, GitHub repo, and Pages deploy workflow set up; site is live.
-1. **Core logic and single-player MVP**
-   - Answer checking (`qb-answer-checker` plus our own rules for Open Trivia DB) and the scoring formula, built test-first as pure TypeScript modules. Test with real QBReader answerlines and messy typed answers.
-   - Open Trivia DB filter and JSON build.
-   - Single-player classic mode with a category picker and timer. Deploy to Pages.
-2. **Multiplayer**
-   - Supabase project with a guided setup script, anonymous auth, Turnstile, and the keep-alive job.
-   - Lobby and Realtime game state.
-   - Server-side answer function with server timestamps and latency adjustment.
-   - Host override screen, live feed, leaderboard.
-3. **Invites**
-   - Game codes, links, QR codes, share menu, Open Graph tags.
-4. **Interest-based suggestions**
-   - Interest picker, mapping table, group score with the 2-player minimum, suggestion UI, deletion at game end.
-5. **Competition mode**
-   - QBReader tossups with word-by-word reveal, power bonus, wrong-answer penalty.
-   - Attribution page.
-6. **Hardening**
-   - End-to-end tests with several simulated players.
-   - Rate limiting, security review of answer secrecy.
-   - Accessibility and mobile typing experience.
+1. **Core logic and single-player MVP** ✅ *done 2026-09-25*
+   - Answer checking (`qb-answer-checker` plus our own rules) and speed scoring, built test-first.
+   - 3,666 Open Trivia DB questions kept; every one accepts its own answer.
+   - Single-player classic mode deployed.
+2. **Multiplayer** ✅ *built 2026-09-25; goes live once the Supabase project is created*
+   - Game service with every server-side rule, tested with simulated players (`src/server/service.test.ts`).
+   - Supabase schema with read-only access rules, one server function, setup script (`scripts/setup-supabase.sh`), daily keep-alive and cleanup.
+   - Lobby, live question with server-synced timer, live feed, host override, leaderboard.
+   - Turnstile support is built in but off until a Cloudflare site key is added.
+3. **Invites** ✅ *done 2026-09-25*
+   - 5-letter game codes, invite links, QR codes, share sheet, link preview image.
+4. **Interest-based suggestions** ✅ *done 2026-09-25*
+   - Up to 5 interests per player; the host sees categories 2+ players share (names only); interests deleted when the game starts.
+5. **Competition mode** ✅ *done 2026-09-25*
+   - QBReader tossups revealed word by word, +200 power bonus, −50 wrong, 1 try, in solo and multiplayer; set credit on reveal; About page.
+6. **Hardening** 🟡 *mostly done*
+   - ✅ Security review (see below) and fixes.
+   - ✅ Rate limits: 10 games per host per hour, 10 answers per question, 2 "more specific?" hints, 50 players, 60 anonymous sign-ins per IP per hour.
+   - ✅ Accessibility basics: labels, live regions, visible focus, reduced motion, 16px+ inputs so phones don't zoom.
+   - ⏳ Browser end-to-end tests with several players, once the Supabase project exists.
+
+### Security decisions (from the Phase 6 review)
+
+- **Answers are recorded in one database step** (`record_answer`), so answers sent at the same moment can't score twice or get around the attempt limits. Host overrides work the same way (`override_answer`).
+- **Nothing is readable early.** A question becomes readable at its start time, not during the countdown. Tossup words are released a few at a time (`question_chunks`). The answer, full text and tournament name are copied in only at the reveal.
+- **Interests** are capped at 5, shown only to the host, and deleted at the start. A host with fake accounts could still probe a few of one player's interests; the stakes are low (interests like "Cycling").
+- **Accepted risk:** both question banks are public, so a determined player could look answers up. Everyone sees what everyone typed after each question, and the About page says the game works best with people you know.
+- **Later:** pin GitHub Actions to commit hashes; make Turnstile required once a Cloudflare key exists.
 
 ---
 
@@ -210,5 +218,5 @@ All checking happens in an Edge Function, so the correct answer never reaches pl
 
 ## 13. Open decisions
 
-- **Wrong-answer penalty:** keep the −5 in tossup mode, or make wrong answers penalty-free for casual play?
+- **Wrong-answer penalty:** tossups use −50 (quiz bowl's −5 on the 1000-point scale). Keep it, or make wrong answers penalty-free for casual play?
 - **Strava auto-fill (future):** only if someone gets a Strava subscription and passes Strava's review for more than 10 athletes. It would then need explicit per-game consent, category names only, and no location data.

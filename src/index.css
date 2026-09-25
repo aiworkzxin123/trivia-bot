@@ -746,6 +746,11 @@ a.mode:hover {
   cursor: default;
 }
 
+/* Unchosen and unavailable (e.g. already 5 interests picked). */
+.chip:disabled:not([aria-pressed='true']) {
+  opacity: 0.5;
+}
+
 .chip-link {
   background: none;
   border: 0;

@@ -6,14 +6,19 @@ import { judge } from '../game/answers/judge.ts'
 import { isInterest } from '../game/interests.ts'
 import type { SourcedQuestion } from '../game/questions/sources.ts'
 import { adjustedElapsed, DEFAULT_SCORING, scoreAnswer } from '../game/scoring.ts'
-import { planTossup, TOSSUP_ATTEMPTS, tossupPoints } from '../game/tossup.ts'
-import { CodeTakenError, type GameStore } from './store.ts'
-import type { AnswerRow, GameRow, GameSettings, PlayerRow, QuestionRow } from './types.ts'
+import { planTossup, TOSSUP_ATTEMPTS, TOSSUP_SCORING, tossupPoints, WORDS_PER_SECOND } from '../game/tossup.ts'
+import { CodeTakenError, GameFullError, NicknameTakenError, type GameStore } from './store.ts'
+import type { AnswerRow, GameRow, GameSettings, NewQuestion, PlayerRow, QuestionChunk, QuestionSecret } from './types.ts'
 
 export const MAX_PLAYERS = 50
 export const GAMES_PER_HOUR = 10
 export const SUBMITS_PER_QUESTION = 10
 export const CLASSIC_ATTEMPTS = 2
+/** "More specific?" hints per question; after that a partial answer counts as wrong. */
+export const MAX_PROMPTS = 2
+export const MAX_INTERESTS = 5
+/** Tossup words are released a few at a time, so the full text can't be read ahead. */
+export const CHUNK_WORDS = 3
 /** Delay before each question opens, so every player sees it start at the same moment. */
 export const QUESTION_LEAD_MS = 2000
 export const GAME_TTL_MS = 24 * 60 * 60 * 1000
@@ -61,8 +66,13 @@ export interface SubmitResult {
 
 function text(value: unknown, field: string, max: number): string {
   if (typeof value !== 'string') throw new GameError(400, `${field} is missing`)
-  // Strip control characters so names can't break the layout.
-  const clean = value.replace(/\p{Cc}/gu, '').trim()
+  // Normalize lookalike characters and strip control and invisible formatting
+  // characters, so names can't break the layout or impersonate someone.
+  const clean = value
+    .normalize('NFKC')
+    .replace(/[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (!clean) throw new GameError(400, `${field} can't be empty`)
   if (clean.length > max) throw new GameError(400, `${field} can be at most ${max} characters`)
   return clean
@@ -85,7 +95,7 @@ export function validateSettings(value: unknown): GameSettings {
 
 function validInterests(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  return [...new Set(value.filter((i): i is string => typeof i === 'string' && isInterest(i)))].slice(0, 20)
+  return [...new Set(value.filter((i): i is string => typeof i === 'string' && isInterest(i)))].slice(0, MAX_INTERESTS)
 }
 
 // ---------- helpers ----------
@@ -98,20 +108,47 @@ function randomCode(random: () => number) {
   return Array.from({ length: 5 }, () => CODE_LETTERS[Math.floor(random() * CODE_LETTERS.length)]).join('')
 }
 
-function limitFor(settings: GameSettings, q: SourcedQuestion) {
-  return settings.format === 'tossup' ? planTossup(q.text).limitMs : settings.timeLimitSec * 1000
+/** Speed points without the first-correct bonus, which the store adds for whoever is first. */
+function pointsFor(game: GameRow, question: { limitMs: number } & QuestionSecret, correct: boolean, elapsedMs: number) {
+  const answer = { correct, elapsedMs, isFirstCorrect: false }
+  if (game.settings.format === 'tossup') return tossupPoints(answer, planTossup(question.fullText))
+  return scoreAnswer({ ...answer, limitMs: question.limitMs }, DEFAULT_SCORING)
 }
 
-function pointsFor(game: GameRow, question: QuestionRow, correct: boolean, elapsedMs: number, isFirstCorrect: boolean) {
-  const answer = { correct, elapsedMs, isFirstCorrect }
-  if (game.settings.format === 'tossup') return tossupPoints(answer, planTossup(question.text))
-  return scoreAnswer({ ...answer, limitMs: question.limitMs }, DEFAULT_SCORING)
+function bonusFor(game: GameRow) {
+  return (game.settings.format === 'tossup' ? TOSSUP_SCORING : DEFAULT_SCORING).firstCorrectBonus
 }
 
 function playerDone(answers: AnswerRow[], playerId: string, attempts: number) {
   const mine = answers.filter((a) => a.playerId === playerId)
   if (mine.some((a) => a.verdict === 'correct' || a.verdict === 'overridden' || a.verdict === 'late')) return true
   return mine.filter((a) => a.verdict === 'wrong').length >= attempts
+}
+
+/** When chunk k becomes readable: the moment its first word appears on screen. */
+export function chunkOffsetMs(k: number): number {
+  return Math.floor(((k * CHUNK_WORDS) / WORDS_PER_SECOND) * 1000)
+}
+
+/** Splits a tossup into chunks of a few words, each released when its first word would be read. */
+export function chunkTossup(fullText: string): QuestionChunk[] {
+  const { words } = planTossup(fullText)
+  const chunks: QuestionChunk[] = []
+  for (let start = 0; start < words.length; start += CHUNK_WORDS) {
+    const idx = chunks.length
+    chunks.push({ idx, offsetMs: chunkOffsetMs(idx), text: words.slice(start, start + CHUNK_WORDS).join(' ') })
+  }
+  return chunks
+}
+
+function toNewQuestion(gameId: string, settings: GameSettings, q: SourcedQuestion, idx: number): NewQuestion {
+  const secret = { answer: q.answer, answerline: q.answerline, fullText: q.text, sourceNote: q.sourceNote ?? null }
+  const base = { gameId, idx, category: q.category, difficulty: q.difficulty ?? null }
+  if (settings.format === 'tossup') {
+    const plan = planTossup(q.text)
+    return { ...base, ...secret, text: '', limitMs: plan.limitMs, wordCount: plan.words.length, powerIndex: plan.powerIndex, chunks: chunkTossup(q.text) }
+  }
+  return { ...base, ...secret, text: q.text, limitMs: settings.timeLimitSec * 1000, wordCount: null, powerIndex: null, chunks: [] }
 }
 
 async function loadGame(deps: ServiceDeps, gameId: unknown): Promise<GameRow> {
@@ -131,6 +168,16 @@ function requireHost(game: GameRow, userId: string) {
   if (game.hostId !== userId) throw new GameError(403, 'Only the host can do that')
 }
 
+async function addPlayer(deps: ServiceDeps, gameId: string, userId: string, nickname: string) {
+  try {
+    return await deps.store.insertPlayer({ gameId, userId, nickname, score: 0, rttMs: 0, joinedAt: deps.now() }, MAX_PLAYERS)
+  } catch (err) {
+    if (err instanceof NicknameTakenError) throw new GameError(409, `Someone in this game is already called ${nickname}. Pick another name.`)
+    if (err instanceof GameFullError) throw new GameError(409, `This game is full (${MAX_PLAYERS} players)`)
+    throw err
+  }
+}
+
 async function openQuestion(deps: ServiceDeps, game: GameRow, idx: number, expected: { status: GameRow['status']; currentIndex?: number }) {
   const question = await deps.store.getQuestion(game.id, idx)
   if (!question) throw new GameError(500, 'Question is missing')
@@ -146,7 +193,7 @@ async function reveal(deps: ServiceDeps, game: GameRow) {
   const question = await deps.store.getQuestion(game.id, game.currentIndex)
   if (!question) return
   // Publish the answer before the status change, so clients that react to it can read the answer.
-  await deps.store.revealQuestion(question.id, question.answer)
+  await deps.store.revealQuestion(question.id, { answer: question.answer, text: question.fullText, sourceNote: question.sourceNote })
   await deps.store.updateGame(game.id, { status: 'reveal' }, { status: 'question', currentIndex: game.currentIndex })
 }
 
@@ -172,7 +219,7 @@ async function create(deps: ServiceDeps, userId: string, a: Extract<Action, { ty
         questionEndsAt: null,
         createdAt: now,
       })
-      const player = await deps.store.insertPlayer({ gameId: game.id, userId, nickname, score: 0, rttMs: 0, joinedAt: now })
+      const player = await addPlayer(deps, game.id, userId, nickname)
       await deps.store.setInterests(game.id, player.id, validInterests(a.interests))
       return { gameId: game.id, code: game.code, playerId: player.id }
     } catch (err) {
@@ -192,12 +239,7 @@ async function join(deps: ServiceDeps, userId: string, a: Extract<Action, { type
   if (existing) return { gameId: game.id, code: game.code, playerId: existing.id }
 
   if (game.status !== 'lobby') throw new GameError(409, 'This game has already started')
-  const players = await deps.store.listPlayers(game.id)
-  if (players.length >= MAX_PLAYERS) throw new GameError(409, `This game is full (${MAX_PLAYERS} players)`)
-  if (players.some((p) => p.nickname.toLowerCase() === nickname.toLowerCase())) {
-    throw new GameError(409, `Someone in this game is already called ${nickname}. Pick another name.`)
-  }
-  const player = await deps.store.insertPlayer({ gameId: game.id, userId, nickname, score: 0, rttMs: 0, joinedAt: deps.now() })
+  const player = await addPlayer(deps, game.id, userId, nickname)
   await deps.store.setInterests(game.id, player.id, validInterests(a.interests))
   return { gameId: game.id, code: game.code, playerId: player.id }
 }
@@ -216,19 +258,9 @@ async function start(deps: ServiceDeps, userId: string, gameId: string) {
     await deps.store.updateGame(game.id, { status: 'lobby' }, { status: 'starting' })
     throw err
   }
-  await deps.store.insertQuestions(
-    questions.map((q, idx) => ({
-      gameId: game.id,
-      idx,
-      category: q.category,
-      text: q.text,
-      difficulty: q.difficulty ?? null,
-      sourceNote: q.sourceNote ?? null,
-      limitMs: limitFor(game.settings, q),
-      answer: q.answer,
-      answerline: q.answerline,
-    })),
-  )
+  // Interests were only needed to pick categories.
+  await deps.store.deleteInterests(game.id)
+  await deps.store.insertQuestions(questions.map((q, idx) => toNewQuestion(game.id, game.settings, q, idx)))
   await deps.store.updateGame(game.id, { questionCount: questions.length }, { status: 'starting' })
   await openQuestion(deps, game, 0, { status: 'starting' })
   return { questionCount: questions.length }
@@ -246,41 +278,50 @@ async function submit(deps: ServiceDeps, userId: string, a: Extract<Action, { ty
 
   const question = await deps.store.getQuestion(game.id, game.currentIndex)
   if (!question) throw new GameError(500, 'Question is missing')
-  const answers = await deps.store.listAnswers(question.id)
-  const mine = answers.filter((x) => x.playerId === player.id)
   const attempts = maxAttempts(game)
-  if (mine.length >= SUBMITS_PER_QUESTION) throw new GameError(429, "You've sent too many answers for this question")
-  if (playerDone(answers, player.id, attempts)) throw new GameError(409, "You've already answered this question")
-  const wrongSoFar = mine.filter((x) => x.verdict === 'wrong').length
+  // A quick early exit; the store repeats these checks atomically when recording.
+  if (playerDone(await deps.store.listAnswers(question.id), player.id, attempts)) {
+    throw new GameError(409, "You've already answered this question")
+  }
 
   const elapsedMs = Math.round(adjustedElapsed(now - game.questionStartedAt, player.rttMs))
-  const base = { gameId: game.id, questionId: question.id, playerId: player.id, given, elapsedMs }
+  const late = now > game.questionEndsAt
+  const verdict = late ? null : judge(question, given)
+  const result: SubmitResult['result'] = late ? 'late' : verdict!.result
+  const recorded = await deps.store.recordAnswer({
+    gameId: game.id,
+    questionId: question.id,
+    playerId: player.id,
+    given,
+    elapsedMs,
+    verdict: result,
+    points: result === 'correct' || result === 'wrong' ? pointsFor(game, question, result === 'correct', elapsedMs) : 0,
+    wrongPoints: pointsFor(game, question, false, elapsedMs),
+    firstCorrectBonus: bonusFor(game),
+    maxAttempts: attempts,
+    maxSubmits: SUBMITS_PER_QUESTION,
+    maxPrompts: MAX_PROMPTS,
+  })
+  if (!recorded.ok) {
+    if (recorded.reason === 'too_many') throw new GameError(429, "You've sent too many answers for this question")
+    throw new GameError(409, "You've already answered this question")
+  }
 
-  let outcome: SubmitResult
-  if (now > game.questionEndsAt) {
-    await deps.store.insertAnswer({ ...base, verdict: 'late', points: 0 })
-    outcome = { result: 'late', points: 0, attemptsLeft: 0 }
-  } else {
-    const verdict = judge(question, given)
-    if (verdict.result === 'prompt') {
-      await deps.store.insertAnswer({ ...base, verdict: 'prompt', points: 0 })
-      return { result: 'prompt', points: 0, attemptsLeft: attempts - wrongSoFar, promptText: verdict.promptText }
-    }
-    const correct = verdict.result === 'correct'
-    const first = correct && (await deps.store.claimFirstCorrect(question.id, player.id))
-    const points = pointsFor(game, question, correct, elapsedMs, first)
-    await deps.store.insertAnswer({ ...base, verdict: correct ? 'correct' : 'wrong', points })
-    if (points) await deps.store.addScore(player.id, points)
-    if (correct) {
-      await deps.store.insertFeed({ gameId: game.id, playerId: player.id, nickname: player.nickname, kind: 'correct', elapsedMs, points })
-    }
-    outcome = { result: correct ? 'correct' : 'wrong', points, attemptsLeft: correct ? 0 : attempts - wrongSoFar - 1 }
+  if (recorded.verdict === 'correct') {
+    await deps.store.insertFeed({ gameId: game.id, playerId: player.id, nickname: player.nickname, kind: 'correct', elapsedMs, points: recorded.points })
   }
 
   // End the question early once everyone is done.
   const [players, latest] = await Promise.all([deps.store.listPlayers(game.id), deps.store.listAnswers(question.id)])
   if (players.every((p) => playerDone(latest, p.id, attempts))) await reveal(deps, game)
-  return outcome
+
+  const attemptsLeft = recorded.verdict === 'wrong' || recorded.verdict === 'prompt' ? attempts - recorded.wrongCount : 0
+  return {
+    result: recorded.verdict,
+    points: recorded.points,
+    attemptsLeft,
+    promptText: recorded.verdict === 'prompt' ? verdict?.promptText : undefined,
+  }
 }
 
 async function revealAction(deps: ServiceDeps, userId: string, gameId: string) {
@@ -304,14 +345,12 @@ async function override(deps: ServiceDeps, userId: string, a: Extract<Action, { 
   const question = await deps.store.getQuestion(game.id, game.currentIndex)
   if (!answer || !question || answer.questionId !== question.id) throw new GameError(404, 'That answer is not from this question')
   if (answer.verdict !== 'wrong') throw new GameError(409, 'Only wrong answers can be accepted')
-  const answers = await deps.store.listAnswers(question.id)
-  if (answers.some((x) => x.playerId === answer.playerId && (x.verdict === 'correct' || x.verdict === 'overridden'))) {
+
+  // Scored at the original submission time; replacing the points also refunds a tossup penalty.
+  const points = pointsFor(game, question, true, answer.elapsedMs)
+  if (!(await deps.store.overrideAnswer(answer.id, points))) {
     throw new GameError(409, 'This player already got the question right')
   }
-  // Scored at the original submission time; replacing the points also refunds a tossup penalty.
-  const points = pointsFor(game, question, true, answer.elapsedMs, false)
-  await deps.store.updateAnswer(answer.id, { verdict: 'overridden', points })
-  await deps.store.addScore(answer.playerId, points - answer.points)
   const player = (await deps.store.listPlayers(game.id)).find((p) => p.id === answer.playerId)
   await deps.store.insertFeed({
     gameId: game.id,
@@ -331,8 +370,6 @@ async function nextAction(deps: ServiceDeps, userId: string, gameId: string) {
   const idx = game.currentIndex + 1
   if (idx >= game.questionCount) {
     await deps.store.updateGame(game.id, { status: 'finished' }, { status: 'reveal', currentIndex: game.currentIndex })
-    // Interests are only kept while the game runs.
-    await deps.store.deleteInterests(game.id)
     return { status: 'finished' }
   }
   await openQuestion(deps, game, idx, { status: 'reveal', currentIndex: game.currentIndex })
@@ -363,15 +400,19 @@ export async function handleAction(deps: ServiceDeps, userId: string | null, raw
     case 'ping': {
       const game = await loadGame(deps, action.gameId)
       const player = await requirePlayer(deps, game, userId)
-      if (typeof action.rttMs === 'number' && Number.isFinite(action.rttMs)) {
-        await deps.store.updatePlayer(player.id, { rttMs: Math.max(0, Math.min(2000, Math.round(action.rttMs))) })
+      // Measured once in the lobby. Later pings only read the clock, so they can't
+      // change anyone's timing mid-game or flood other players with updates.
+      if (game.status === 'lobby' && typeof action.rttMs === 'number' && Number.isFinite(action.rttMs)) {
+        const rttMs = Math.max(0, Math.min(2000, Math.round(action.rttMs)))
+        if (Math.abs(rttMs - player.rttMs) > 10) await deps.store.updatePlayer(player.id, { rttMs })
       }
       return { serverNow: deps.now() }
     }
     case 'suggestions': {
       const game = await loadGame(deps, action.gameId)
-      await requirePlayer(deps, game, userId)
-      return { interests: await deps.store.sharedInterests(game.id) }
+      // Only the host picks categories, so only the host sees what the group shares.
+      requireHost(game, userId)
+      return { interests: game.status === 'lobby' ? await deps.store.sharedInterests(game.id) : [] }
     }
     case 'start':
       return start(deps, userId, action.gameId)

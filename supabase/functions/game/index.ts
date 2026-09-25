@@ -17,10 +17,12 @@ const admin = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey, {
   auth: { persistSession: false },
 })
 const store = new SupabaseStore(admin)
+/** Shared with the keep-alive workflow, so only it can trigger cleanup. */
+const CLEANUP_KEY = Deno.env.get('CLEANUP_KEY')
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cleanup-key',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
@@ -44,6 +46,11 @@ Deno.serve(async (req) => {
     body = await req.json()
   } catch {
     return json({ error: 'The request body must be JSON' }, 400)
+  }
+
+  const isCleanup = (body as { type?: unknown } | null)?.type === 'cleanup'
+  if (isCleanup && (!CLEANUP_KEY || req.headers.get('x-cleanup-key') !== CLEANUP_KEY)) {
+    return json({ error: 'Not allowed' }, 401)
   }
 
   try {

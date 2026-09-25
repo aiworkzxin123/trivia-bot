@@ -112,19 +112,11 @@ describe('lobby', () => {
     await expectError(act('ana', { type: 'updateSettings', gameId, settings: classic }), 403)
   })
 
-  it('suggests only interests at least two players share, then deletes them at the end', async () => {
+  it('suggests only interests at least two players share', async () => {
     const { gameId, code } = await act('host', { type: 'create', nickname: 'Host', settings: classic, interests: ['cycling', 'music'] }) as { gameId: string; code: string }
     await act('ana', { type: 'join', code, nickname: 'Ana', interests: ['cycling', 'reading', 'not-a-real-interest'] })
     await act('bo', { type: 'join', code, nickname: 'Bo', interests: ['music', 'cycling'] })
-    expect((await act('ana', { type: 'suggestions', gameId })).interests).toEqual(['cycling', 'music'])
-
-    questions = classicQuestions.slice(0, 1)
-    await act('host', { type: 'start', gameId })
-    at(gameId, 20_001)
-    await act('ana', { type: 'reveal', gameId })
-    await act('host', { type: 'next', gameId })
-    expect(store.games.get(gameId)!.status).toBe('finished')
-    expect(await store.sharedInterests(gameId)).toEqual([])
+    expect((await act('host', { type: 'suggestions', gameId })).interests).toEqual(['cycling', 'music'])
   })
 })
 
@@ -303,7 +295,7 @@ describe('tossup mode', () => {
     const { gameId } = await lobby(['ana'], tossup)
     await act('host', { type: 'start', gameId })
     const q = (await store.getQuestion(gameId, 0))!
-    expect(q.limitMs).toBe(planTossup(q.text).limitMs)
+    expect(q.limitMs).toBe(planTossup(tossupQuestions[0].text).limitMs)
     expect(q.sourceNote).toBe('2017 POMMSS')
     at(gameId, 500)
     expect(await act('ana', { type: 'submit', gameId, answer: 'cork' })).toMatchObject({ result: 'wrong', points: -50, attemptsLeft: 0 })
@@ -322,5 +314,95 @@ describe('tossup mode', () => {
     const wrong = [...store.answers.values()].find((a) => a.verdict === 'wrong')!
     const { points } = await act('host', { type: 'override', gameId, answerId: wrong.id })
     expect(score(gameId, 'ana')).toBe(points)
+  })
+})
+
+describe('security hardening', () => {
+  it('scores a correct answer once even when sent many times at once', async () => {
+    const { gameId } = await lobby(['ana'])
+    await act('host', { type: 'start', gameId })
+    at(gameId, 2000)
+    const results = await Promise.allSettled(Array.from({ length: 10 }, () => act('ana', { type: 'submit', gameId, answer: 'paris' })))
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(score(gameId, 'ana')).toBe(950 + 100)
+  })
+
+  it('enforces the attempt limit when guesses arrive at once', async () => {
+    const { gameId } = await lobby(['ana'])
+    await act('host', { type: 'start', gameId })
+    at(gameId, 2000)
+    await Promise.allSettled(['lyon', 'nice', 'lille', 'paris'].map((answer) => act('ana', { type: 'submit', gameId, answer })))
+    const mine = [...store.answers.values()].filter((a) => a.verdict !== 'prompt')
+    expect(mine.length).toBeLessThanOrEqual(2)
+  })
+
+  it('applies a host override once even when sent twice at once', async () => {
+    const { gameId } = await lobby(['ana'])
+    await act('host', { type: 'start', gameId })
+    at(gameId, 10_000)
+    await act('ana', { type: 'submit', gameId, answer: 'paree' })
+    await act('ana', { type: 'submit', gameId, answer: 'parris france' })
+    at(gameId, 20_001)
+    await act('ana', { type: 'reveal', gameId })
+    const wrong = [...store.answers.values()].filter((a) => a.verdict === 'wrong')
+    await Promise.allSettled([...wrong, ...wrong].map((a) => act('host', { type: 'override', gameId, answerId: a.id })))
+    expect(score(gameId, 'ana')).toBe(750)
+  })
+
+  it('treats a third "more specific?" as a wrong answer', async () => {
+    questions = [classicQuestions[1]]
+    const { gameId } = await lobby(['ana'])
+    await act('host', { type: 'start', gameId })
+    at(gameId, 1000)
+    expect((await act('ana', { type: 'submit', gameId, answer: 'ocean' })).result).toBe('prompt')
+    expect((await act('ana', { type: 'submit', gameId, answer: 'the ocean' })).result).toBe('prompt')
+    expect(await act('ana', { type: 'submit', gameId, answer: 'ocean!' })).toMatchObject({ result: 'wrong', attemptsLeft: 1 })
+  })
+
+  it('strips invisible characters from names, so lookalikes count as taken', async () => {
+    const { code } = await lobby(['Ana'])
+    await expectError(act('mallory', { type: 'join', code, nickname: 'An\u200Ba' }), 409)
+  })
+
+  it('shows suggestions to the host only', async () => {
+    const { gameId } = await lobby(['ana'])
+    await expectError(act('ana', { type: 'suggestions', gameId }), 403)
+    expect(await act('host', { type: 'suggestions', gameId })).toEqual({ interests: [] })
+  })
+
+  it('keeps at most 5 interests per player', async () => {
+    const { code } = await lobby([])
+    await act('ana', { type: 'join', code, nickname: 'Ana', interests: ['running', 'cycling', 'swimming', 'hiking', 'travel', 'music', 'art'] })
+    const entry = [...store.interests.values()].find((e) => e.interests.includes('running'))!
+    expect(entry.interests).toHaveLength(5)
+  })
+
+  it('deletes interests as soon as the game starts', async () => {
+    const { gameId, code } = (await act('host', { type: 'create', nickname: 'Host', settings: classic, interests: ['music'] })) as { gameId: string; code: string }
+    await act('ana', { type: 'join', code, nickname: 'Ana', interests: ['music'] })
+    await act('host', { type: 'start', gameId })
+    expect(store.interests.size).toBe(0)
+  })
+
+  it('records round-trip time only in the lobby', async () => {
+    const { gameId } = await lobby(['ana'])
+    await act('host', { type: 'start', gameId })
+    await act('ana', { type: 'ping', gameId, rttMs: 300 })
+    expect([...store.players.values()].find((p) => p.nickname === 'ana')!.rttMs).toBe(0)
+  })
+
+  it('keeps tossup text, answer and source hidden until the reveal, releasing words in timed chunks', async () => {
+    questions = tossupQuestions
+    const { gameId } = await lobby(['ana'], { ...classic, format: 'tossup' })
+    await act('host', { type: 'start', gameId })
+    const q = (await store.getQuestion(gameId, 0))!
+    expect(store.publicQuestion(q.id)).toMatchObject({ text: '', sourceNote: null, revealedAnswer: null })
+    const chunks = store.chunks.get(q.id)!
+    expect(chunks.map((c) => c.text).join(' ')).toBe(planTossup(tossupQuestions[0].text).words.join(' '))
+    expect(chunks[0].offsetMs).toBe(0)
+    expect(chunks[1].offsetMs).toBeGreaterThan(0)
+    at(gameId, 999_999)
+    await act('ana', { type: 'reveal', gameId })
+    expect(store.publicQuestion(q.id)).toMatchObject({ text: tossupQuestions[0].text, sourceNote: '2017 POMMSS', revealedAnswer: 'Dublin' })
   })
 })

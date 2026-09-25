@@ -114,8 +114,16 @@ export function useGame(gameId: string): LiveGame {
   useEffect(() => {
     if (!supabase) return
     const db = supabase
-    const reload = () => void loadRef.current()
-    reload()
+    // Many changes can arrive at once (every player's score), so reload once per burst.
+    let pending: ReturnType<typeof setTimeout> | null = null
+    const reload = () => {
+      if (pending) return
+      pending = setTimeout(() => {
+        pending = null
+        void loadRef.current()
+      }, 250)
+    }
+    void loadRef.current()
     const channel = db
       .channel(`game:${gameId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'games', filter: `id=eq.${gameId}` }, reload)
@@ -125,6 +133,7 @@ export function useGame(gameId: string): LiveGame {
     const poll = setInterval(reload, POLL_MS)
     return () => {
       clearInterval(poll)
+      if (pending) clearTimeout(pending)
       void db.removeChannel(channel)
     }
   }, [gameId])
@@ -157,15 +166,16 @@ export function useGame(gameId: string): LiveGame {
     }
   }, [gameId, meId])
 
-  // Suggestions change as players join, so refresh them with the player list while in the lobby.
+  // Only the host sees suggestions. They change as players join, so refresh them with the player list.
   const status = state.game?.status
   const playerCount = state.players.length
+  const isHost = Boolean(state.userId && state.game?.hostId === state.userId)
   useEffect(() => {
-    if (status !== 'lobby' || !meId) return
+    if (status !== 'lobby' || !meId || !isHost) return
     callGame<{ interests: string[] }>({ type: 'suggestions', gameId })
       .then(({ interests }) => setState((s) => ({ ...s, sharedInterests: interests })))
       .catch(() => {})
-  }, [gameId, status, playerCount, meId])
+  }, [gameId, status, playerCount, meId, isHost])
 
   const serverNow = useCallback(() => Date.now() + offset.current, [])
   const refresh = useCallback(() => void loadRef.current(), [])

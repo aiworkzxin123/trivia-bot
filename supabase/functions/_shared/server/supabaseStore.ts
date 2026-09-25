@@ -1,8 +1,19 @@
 // Copied from src/ by scripts/sync-functions.ts. Edit the original, not this file.
 /** GameStore backed by Supabase, used by the server function with the service role key. */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { CodeTakenError, type GameStore } from './store.ts'
-import type { AnswerRow, FeedEvent, GameRow, GameStatus, NewQuestion, PlayerRow, QuestionRow, QuestionSecret } from './types.ts'
+import { CodeTakenError, GameFullError, NicknameTakenError, type GameStore } from './store.ts'
+import type {
+  AnswerRow,
+  FeedEvent,
+  GameRow,
+  GameStatus,
+  NewQuestion,
+  PlayerRow,
+  QuestionRow,
+  QuestionSecret,
+  RecordAnswerInput,
+  RecordAnswerResult,
+} from './types.ts'
 
 type Row = Record<string, unknown>
 
@@ -66,6 +77,8 @@ export function toQuestion(r: Row): QuestionRow {
     difficulty: (r.difficulty as string) ?? null,
     sourceNote: (r.source_note as string) ?? null,
     limitMs: r.limit_ms as number,
+    wordCount: (r.word_count as number) ?? null,
+    powerIndex: (r.power_index as number) ?? null,
     revealedAnswer: (r.revealed_answer as string) ?? null,
   }
 }
@@ -125,9 +138,13 @@ export class SupabaseStore implements GameStore {
     const data = check(await this.db.from('players').select().eq('game_id', gameId).eq('user_id', userId).maybeSingle())
     return data ? toPlayer(data) : null
   }
-  async insertPlayer(p: Omit<PlayerRow, 'id'>) {
+  /** The cap is enforced by the players_cap trigger; maxPlayers is kept for the interface. */
+  async insertPlayer(p: Omit<PlayerRow, 'id'>, _maxPlayers: number) {
     const row = { game_id: p.gameId, user_id: p.userId, nickname: p.nickname, score: p.score, rtt_ms: p.rttMs, joined_at: iso(p.joinedAt) }
-    return toPlayer(check(await this.db.from('players').insert(row).select().single()))
+    const res = await this.db.from('players').insert(row).select().single()
+    if (res.error?.message.includes('game_full')) throw new GameFullError()
+    if (res.error?.code === '23505' && res.error.message.includes('players_game_nickname_idx')) throw new NicknameTakenError()
+    return toPlayer(check(res))
   }
   async updatePlayer(id: string, patch: Partial<Pick<PlayerRow, 'rttMs' | 'nickname'>>) {
     const row: Row = {}
@@ -135,10 +152,6 @@ export class SupabaseStore implements GameStore {
     if (patch.nickname !== undefined) row.nickname = patch.nickname
     check(await this.db.from('players').update(row).eq('id', id))
   }
-  async addScore(playerId: string, delta: number) {
-    check(await this.db.rpc('add_score', { p_player: playerId, p_delta: delta }))
-  }
-
   async insertQuestions(questions: NewQuestion[]) {
     const rows = questions.map((q) => ({
       game_id: q.gameId,
@@ -146,26 +159,48 @@ export class SupabaseStore implements GameStore {
       category: q.category,
       text: q.text,
       difficulty: q.difficulty,
-      source_note: q.sourceNote,
       limit_ms: q.limitMs,
+      word_count: q.wordCount,
+      power_index: q.powerIndex,
     }))
     const inserted = check(await this.db.from('questions').insert(rows).select('id, idx')) as { id: string; idx: number }[]
+    const byIdx = new Map(questions.map((q) => [q.idx, q]))
     const secrets = inserted.map((r) => {
-      const q = questions.find((x) => x.idx === r.idx)!
-      return { question_id: r.id, answer: q.answer, answerline: q.answerline }
+      const q = byIdx.get(r.idx)!
+      return { question_id: r.id, answer: q.answer, answerline: q.answerline, full_text: q.fullText, source_note: q.sourceNote }
     })
     check(await this.db.from('question_secrets').insert(secrets))
+    const chunks = inserted.flatMap((r) =>
+      byIdx.get(r.idx)!.chunks.map((c) => ({ question_id: r.id, game_id: byIdx.get(r.idx)!.gameId, idx: c.idx, offset_ms: c.offsetMs, text: c.text })),
+    )
+    if (chunks.length) check(await this.db.from('question_chunks').insert(chunks))
   }
   async getQuestion(gameId: string, idx: number) {
     const data = check(
-      await this.db.from('questions').select('*, question_secrets(answer, answerline)').eq('game_id', gameId).eq('idx', idx).maybeSingle(),
+      await this.db
+        .from('questions')
+        .select('*, question_secrets(answer, answerline, full_text, source_note)')
+        .eq('game_id', gameId)
+        .eq('idx', idx)
+        .maybeSingle(),
     ) as Row | null
     if (!data) return null
-    const secret = (Array.isArray(data.question_secrets) ? data.question_secrets[0] : data.question_secrets) as QuestionSecret
-    return { ...toQuestion(data), answer: secret.answer, answerline: secret.answerline }
+    const s = (Array.isArray(data.question_secrets) ? data.question_secrets[0] : data.question_secrets) as Row
+    const secret: QuestionSecret = {
+      answer: s.answer as string,
+      answerline: s.answerline as string,
+      fullText: s.full_text as string,
+      sourceNote: (s.source_note as string) ?? null,
+    }
+    return { ...toQuestion(data), ...secret }
   }
-  async revealQuestion(questionId: string, answer: string) {
-    check(await this.db.from('questions').update({ revealed_answer: answer }).eq('id', questionId))
+  async revealQuestion(questionId: string, reveal: { answer: string; text: string; sourceNote: string | null }) {
+    check(
+      await this.db
+        .from('questions')
+        .update({ revealed_answer: reveal.answer, text: reveal.text, source_note: reveal.sourceNote })
+        .eq('id', questionId),
+    )
   }
 
   async listAnswers(questionId: string) {
@@ -175,26 +210,28 @@ export class SupabaseStore implements GameStore {
     const data = check(await this.db.from('answers').select().eq('id', id).maybeSingle())
     return data ? toAnswer(data) : null
   }
-  async insertAnswer(a: Omit<AnswerRow, 'id' | 'createdAt'>) {
-    const row = {
-      game_id: a.gameId,
-      question_id: a.questionId,
-      player_id: a.playerId,
-      given: a.given,
-      verdict: a.verdict,
-      points: a.points,
-      elapsed_ms: a.elapsedMs,
-    }
-    return toAnswer(check(await this.db.from('answers').insert(row).select().single()))
+  async recordAnswer(a: RecordAnswerInput): Promise<RecordAnswerResult> {
+    const r = check(
+      await this.db.rpc('record_answer', {
+        p_game: a.gameId,
+        p_question: a.questionId,
+        p_player: a.playerId,
+        p_given: a.given,
+        p_elapsed_ms: a.elapsedMs,
+        p_verdict: a.verdict,
+        p_points: a.points,
+        p_wrong_points: a.wrongPoints,
+        p_bonus: a.firstCorrectBonus,
+        p_max_attempts: a.maxAttempts,
+        p_max_submits: a.maxSubmits,
+        p_max_prompts: a.maxPrompts,
+      }),
+    ) as { ok: boolean; reason?: 'done' | 'too_many'; verdict?: RecordAnswerInput['verdict']; points?: number; wrong_count?: number }
+    if (!r.ok) return { ok: false, reason: r.reason ?? 'done' }
+    return { ok: true, verdict: r.verdict!, points: r.points!, wrongCount: r.wrong_count! }
   }
-  async updateAnswer(id: string, patch: Partial<Pick<AnswerRow, 'verdict' | 'points'>>) {
-    check(await this.db.from('answers').update(patch).eq('id', id))
-  }
-  async claimFirstCorrect(questionId: string, playerId: string) {
-    const res = await this.db.from('question_firsts').insert({ question_id: questionId, player_id: playerId })
-    if (res.error?.code === '23505') return false
-    check(res)
-    return true
+  async overrideAnswer(answerId: string, points: number) {
+    return check(await this.db.rpc('override_answer', { p_answer: answerId, p_points: points })) as boolean
   }
 
   async insertFeed(e: FeedEvent) {

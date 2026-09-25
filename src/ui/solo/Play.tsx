@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { questionLimitMs, type GameState } from '../../game/engine.ts'
 import { displayCategory } from '../../game/questions/pool.ts'
 import { capitalize, seconds } from '../../lib/format.ts'
+import { planTossup } from '../../game/tossup.ts'
 import { TossupText } from '../parts.tsx'
 
 interface Props {
@@ -54,7 +55,7 @@ export function Play({ game, now, onSubmit, onOverride, onNext, onQuit }: Props)
           {game.phase === 'question' && <span className="clock">{Math.ceil(remaining / 1000)}s</span>}
         </div>
         {tossup ? (
-          <TossupText text={question.text} elapsedMs={now - game.questionStartedAt} complete={game.phase !== 'question'} />
+          <TossupText {...planTossup(question.text)} elapsedMs={now - game.questionStartedAt} complete={game.phase !== 'question'} />
         ) : (
           <h2 className="question">{question.text}</h2>
         )}

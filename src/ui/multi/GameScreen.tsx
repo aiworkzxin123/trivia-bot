@@ -4,10 +4,11 @@ import { suggestCategories } from '../../game/interests.ts'
 import { OPENTDB_CATEGORIES } from '../../game/questions/categories.ts'
 import { displayCategory } from '../../game/questions/pool.ts'
 import { TOSSUP_CATEGORIES } from '../../game/questions/sources.ts'
-import { TOSSUP_ATTEMPTS } from '../../game/tossup.ts'
+import { planTossup, TOSSUP_ATTEMPTS } from '../../game/tossup.ts'
 import { absoluteUrl } from '../../lib/router.ts'
 import { callGame } from '../../lib/supabase.ts'
 import { useGame, type LiveGame } from '../../lib/useGame.ts'
+import { useTossupWords } from '../../lib/useTossupWords.ts'
 import { CLASSIC_ATTEMPTS, type SubmitResult } from '../../server/service.ts'
 import type { AnswerRow, GameSettings } from '../../server/types.ts'
 import { capitalize, seconds } from '../../lib/format.ts'
@@ -225,6 +226,19 @@ function LiveQuestion({ live }: { live: LiveGame }) {
   const mine = live.answers.filter((a) => a.playerId === live.me?.id)
   const done = isDone(mine, attempts)
   const wrongSoFar = mine.filter((a) => a.verdict === 'wrong').length
+  const isTossup = game.settings.format === 'tossup'
+  const words = useTossupWords(isTossup ? (question?.id ?? null) : null, question?.wordCount ?? null, startedAt, serverNow)
+
+  // The question itself becomes readable at its start time, after the countdown.
+  useEffect(() => {
+    if (question) return
+    const id = setTimeout(refresh, Math.max(0, startedAt - serverNow() + 150))
+    const retry = setInterval(refresh, 1000)
+    return () => {
+      clearTimeout(id)
+      clearInterval(retry)
+    }
+  }, [question, startedAt, serverNow, refresh])
 
   // Close the question when time is up. The host asks first; others follow in case the host has left.
   useEffect(() => {
@@ -277,7 +291,6 @@ function LiveQuestion({ live }: { live: LiveGame }) {
   }
 
   const remaining = Math.max(0, endsAt - now)
-  const isTossup = game.settings.format === 'tossup'
   const feed = live.feed.filter((f) => f.createdAt >= startedAt - 5000).reverse()
 
   return (
@@ -292,7 +305,11 @@ function LiveQuestion({ live }: { live: LiveGame }) {
           {question.difficulty && !isTossup && <span className={`tag diff-${question.difficulty}`}>{question.difficulty}</span>}
           <span className="clock">{Math.ceil(remaining / 1000)}s</span>
         </div>
-        {isTossup ? <TossupText text={question.text} elapsedMs={elapsed} complete={done} /> : <h2 className="question">{question.text}</h2>}
+        {isTossup ? (
+          <TossupText words={words} powerIndex={question.powerIndex} elapsedMs={elapsed} complete={false} />
+        ) : (
+          <h2 className="question">{question.text}</h2>
+        )}
 
         {done ? (
           <p className="waiting">
@@ -419,7 +436,11 @@ function Reveal({ live }: { live: LiveGame }) {
             <div className="card-meta">
               <span className="tag">{categoryLabel(game.settings.format, question.category)}</span>
             </div>
-            {game.settings.format === 'tossup' ? <TossupText text={question.text} elapsedMs={0} complete /> : <h2 className="question">{question.text}</h2>}
+            {game.settings.format === 'tossup' ? (
+              <TossupText {...planTossup(question.text)} elapsedMs={0} complete />
+            ) : (
+              <h2 className="question">{question.text}</h2>
+            )}
             <p className="answer-line big">
               <span className="label">Answer</span> {question.revealedAnswer}
             </p>

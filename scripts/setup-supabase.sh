@@ -68,7 +68,8 @@ SECRET_KEY="$(echo "$KEYS" | json "(j.find(k=>k.type==='secret') ?? j.find(k=>k.
 SUPABASE_URL="https://$PROJECT_REF.supabase.co"
 
 step "Deploying the game server function"
-$SB secrets set --project-ref "$PROJECT_REF" GAME_SERVICE_KEY="$SECRET_KEY" >/dev/null
+CLEANUP_KEY="$(node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))")"
+$SB secrets set --project-ref "$PROJECT_REF" GAME_SERVICE_KEY="$SECRET_KEY" CLEANUP_KEY="$CLEANUP_KEY" >/dev/null
 npm run -s sync:functions
 $SB functions deploy game --project-ref "$PROJECT_REF" --use-api
 
@@ -78,6 +79,7 @@ printf 'VITE_SUPABASE_URL=%s\nVITE_SUPABASE_ANON_KEY=%s\n' "$SUPABASE_URL" "$PUB
 step "Pointing the GitHub Pages build at the project"
 gh variable set SUPABASE_URL --body "$SUPABASE_URL"
 gh variable set SUPABASE_ANON_KEY --body "$PUBLIC_KEY"
+gh secret set CLEANUP_KEY --body "$CLEANUP_KEY"
 gh workflow run deploy.yml
 
 step "Done"

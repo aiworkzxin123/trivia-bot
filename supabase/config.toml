@@ -8,8 +8,9 @@ additional_redirect_urls = ["http://localhost:5173/"]
 enable_anonymous_sign_ins = true
 
 [auth.rate_limit]
-# The default of 30 per hour per IP is too low when a group joins from one Wi-Fi network.
-anonymous_users = 300
+# The default of 30 per hour per IP is too low when a group joins from one Wi-Fi network,
+# but kept low enough that one device cannot create thousands of accounts.
+anonymous_users = 60
 
 [functions.game]
 # The function checks the user itself, so the cleanup job can call it without signing in.

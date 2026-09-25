@@ -18,8 +18,10 @@ jobs:
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          CLEANUP_KEY: ${{ secrets.CLEANUP_KEY }}
         run: |
           curl --fail-with-body -sS -X POST "$SUPABASE_URL/functions/v1/game" \
             -H "Content-Type: application/json" \
             -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "x-cleanup-key: $CLEANUP_KEY" \
             -d '{"type":"cleanup"}'

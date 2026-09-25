@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { INTERESTS } from '../game/interests.ts'
-import { planTossup, wordsRevealed } from '../game/tossup.ts'
+import { POWER_BONUS, WORDS_PER_SECOND } from '../game/tossup.ts'
 import type { PlayerRow } from '../server/types.ts'
 
 export interface CategoryOption {
@@ -66,12 +66,18 @@ export function CategoryPicker({
   )
 }
 
+export const MAX_INTERESTS = 5
+
 export function InterestPicker({ selected, onChange }: { selected: string[]; onChange: (ids: string[]) => void }) {
   const chosen = new Set(selected)
+  const full = selected.length >= MAX_INTERESTS
   return (
     <fieldset className="field">
       <legend>
-        Your interests <span className="hint">Optional. Used to suggest categories. Deleted when the game ends.</span>
+        Your interests{' '}
+        <span className="hint">
+          Optional, up to {MAX_INTERESTS}. Only used to suggest categories to the host, and deleted when the game starts.
+        </span>
       </legend>
       <div className="chips">
         {INTERESTS.map((i) => (
@@ -80,6 +86,7 @@ export function InterestPicker({ selected, onChange }: { selected: string[]; onC
             type="button"
             className="chip"
             aria-pressed={chosen.has(i.id)}
+            disabled={full && !chosen.has(i.id)}
             onClick={() => onChange(chosen.has(i.id) ? selected.filter((x) => x !== i.id) : [...selected, i.id])}
           >
             {i.label}
@@ -142,19 +149,28 @@ export function SharePanel({ code, url }: { code: string; url: string }) {
   )
 }
 
-/** Tossup text revealed word by word as time passes. */
-export function TossupText({ text, elapsedMs, complete }: { text: string; elapsedMs: number; complete: boolean }) {
-  const plan = planTossup(text)
-  const shown = complete ? plan.words.length : wordsRevealed(plan, elapsedMs)
-  const inPower = plan.powerIndex !== null && shown <= plan.powerIndex
+/** Tossup words revealed one by one at reading speed, from whatever words have arrived. */
+export function TossupText({
+  words,
+  powerIndex,
+  elapsedMs,
+  complete,
+}: {
+  words: string[]
+  powerIndex: number | null
+  elapsedMs: number
+  complete: boolean
+}) {
+  const shown = complete ? words.length : Math.min(words.length, Math.ceil((Math.max(0, elapsedMs) / 1000) * WORDS_PER_SECOND))
+  const inPower = powerIndex !== null && shown <= powerIndex
   return (
     <div className="tossup">
       <p className="question tossup-text" aria-live="off">
-        {plan.words.slice(0, shown).join(' ')}
-        {!complete && shown < plan.words.length && <span className="cursor" aria-hidden="true" />}
+        {words.slice(0, shown).join(' ')}
+        {!complete && <span className="cursor" aria-hidden="true" />}
       </p>
       {!complete && (
-        <p className={`power-state ${inPower ? 'on' : ''}`}>{inPower ? 'Power: answer now for a +200 bonus' : 'Past the power mark'}</p>
+        <p className={`power-state ${inPower ? 'on' : ''}`}>{inPower ? `Power: answer now for a +${POWER_BONUS} bonus` : 'Past the power mark'}</p>
       )}
     </div>
   )
