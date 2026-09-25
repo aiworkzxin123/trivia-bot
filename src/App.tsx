@@ -1,122 +1,99 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useState } from 'react'
+import { next, override, startGame, submit, timeout, type GameState } from './game/engine.ts'
+import { loadQuestions, pickQuestions, type QuestionFile } from './game/questions/pool.ts'
+import { Play } from './ui/Play.tsx'
+import { Results } from './ui/Results.tsx'
+import { Setup } from './ui/Setup.tsx'
+import { loadSeen, loadSettings, markSeen, saveSettings, type SavedSettings } from './ui/storage.ts'
 
-function App() {
-  const [count, setCount] = useState(0)
+const ATTEMPTS = 2
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+/** Re-renders every 100ms while active, returning a monotonic clock in ms. */
+function useClock(active: boolean): number {
+  const [now, setNow] = useState(() => performance.now())
+  useEffect(() => {
+    if (!active) return
+    const id = setInterval(() => setNow(performance.now()), 100)
+    return () => clearInterval(id)
+  }, [active])
+  return now
 }
 
-export default App
+export default function App() {
+  const [data, setData] = useState<QuestionFile | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [settings, setSettings] = useState<SavedSettings>(loadSettings)
+  const [game, setGame] = useState<GameState | null>(null)
+  const now = useClock(game?.phase === 'question')
+
+  useEffect(() => {
+    loadQuestions().then(setData, (e: Error) => setError(e.message))
+  }, [])
+
+  // Close the question when time runs out (20ms late, so the engine always sees the limit passed).
+  const deadline = game?.phase === 'question' ? game.questionStartedAt + game.settings.timeLimitMs : null
+  useEffect(() => {
+    if (deadline === null) return
+    const id = setTimeout(() => setGame((g) => g && timeout(g, performance.now())), deadline - performance.now() + 20)
+    return () => clearTimeout(id)
+  }, [deadline])
+
+  // Let Enter move on from the reveal, even when focus has left the Next button.
+  useEffect(() => {
+    if (game?.phase !== 'reveal') return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) setGame((g) => g && next(g, performance.now()))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [game?.phase])
+
+  function changeSettings(s: SavedSettings) {
+    setSettings(s)
+    saveSettings(s)
+  }
+
+  function start() {
+    if (!data) return
+    const questions = pickQuestions(data.questions, settings, loadSeen())
+    markSeen(questions.map((q) => q.id))
+    setGame(startGame(questions, { timeLimitMs: settings.timeLimitSec * 1000, attempts: ATTEMPTS }, performance.now()))
+  }
+
+  let screen
+  if (error) {
+    screen = (
+      <p className="notice" role="alert">
+        {error}, then reload the page.
+      </p>
+    )
+  } else if (!data) {
+    screen = <p className="notice">Loading questions…</p>
+  } else if (!game) {
+    screen = <Setup categories={data.categories} settings={settings} onChange={changeSettings} onStart={start} />
+  } else if (game.phase === 'finished') {
+    screen = <Results game={game} onPlayAgain={start} onChangeSettings={() => setGame(null)} />
+  } else {
+    screen = (
+      <Play
+        game={game}
+        now={now}
+        onSubmit={(answer) => setGame(submit(game, answer, performance.now()))}
+        onOverride={() => setGame(override(game))}
+        onNext={() => setGame(next(game, performance.now()))}
+        onQuit={() => setGame(null)}
+      />
+    )
+  }
+
+  return (
+    <div className="app">
+      <main>{screen}</main>
+      <footer className="credits">
+        Questions from <a href="https://opentdb.com">Open Trivia DB</a>, licensed{' '}
+        <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>. Answer checking by{' '}
+        <a href="https://github.com/qbreader/qb-answer-checker">qb-answer-checker</a>.
+      </footer>
+    </div>
+  )
+}

@@ -141,7 +141,7 @@ All checking happens in an Edge Function, so the correct answer never reaches pl
 3. **Group score:** for each category, count how many players' interests map to it. Categories shared by more players rank higher.
 4. **Privacy:**
    - The lobby shows **category names only**, with no counts and no names.
-   - A category is suggested only when **at least 3 players** share it.
+   - A category is suggested only when **at least 2 players** share it.
    - Interests are **deleted when the game ends**.
 5. Players still choose or vote on the categories themselves. Suggestions are only a starting point.
 
@@ -176,7 +176,7 @@ All checking happens in an Edge Function, so the correct answer never reaches pl
 3. **Invites**
    - Game codes, links, QR codes, share menu, Open Graph tags.
 4. **Interest-based suggestions**
-   - Interest picker, mapping table, group score with the 3-player minimum, suggestion UI, deletion at game end.
+   - Interest picker, mapping table, group score with the 2-player minimum, suggestion UI, deletion at game end.
 5. **Competition mode**
    - QBReader tossups with word-by-word reveal, power bonus, wrong-answer penalty.
    - Attribution page.
@@ -210,6 +210,5 @@ All checking happens in an Edge Function, so the correct answer never reaches pl
 
 ## 13. Open decisions
 
-- **Suggestion minimum:** the 3-player rule was chosen for Strava's terms. With self-picked interests it isn't legally required. Keep it, or lower it to 2 so small games also get suggestions?
 - **Wrong-answer penalty:** keep the −5 in tossup mode, or make wrong answers penalty-free for casual play?
 - **Strava auto-fill (future):** only if someone gets a Strava subscription and passes Strava's review for more than 10 athletes. It would then need explicit per-game consent, category names only, and no location data.

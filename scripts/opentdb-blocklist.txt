@@ -1,0 +1,2 @@
+# Open Trivia DB questions to leave out, one exact question text per line.
+# Add questions that only make sense with answer choices.
