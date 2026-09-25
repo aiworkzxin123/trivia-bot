@@ -1,4 +1,4 @@
-import type { GameState } from '../game/engine.ts'
+import type { GameState } from '../../game/engine.ts'
 
 interface Props {
   game: GameState

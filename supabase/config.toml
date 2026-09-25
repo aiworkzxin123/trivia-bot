@@ -1,0 +1,16 @@
+# Supabase project settings. Pushed to the hosted project by scripts/setup-supabase.sh.
+project_id = "trivia-bot"
+
+[auth]
+site_url = "https://aiworkzxin123.github.io/trivia-bot/"
+additional_redirect_urls = ["http://localhost:5173/"]
+# Players join without an account; each browser gets an anonymous user.
+enable_anonymous_sign_ins = true
+
+[auth.rate_limit]
+# The default of 30 per hour per IP is too low when a group joins from one Wi-Fi network.
+anonymous_users = 300
+
+[functions.game]
+# The function checks the user itself, so the cleanup job can call it without signing in.
+verify_jwt = false

@@ -1,0 +1,25 @@
+name: Keep Supabase awake
+
+# Free Supabase projects pause after a week without activity. This calls the
+# game function once a day, which also deletes games older than a day.
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    if: vars.SUPABASE_URL != ''
+    steps:
+      - name: Call the cleanup action
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: |
+          curl --fail-with-body -sS -X POST "$SUPABASE_URL/functions/v1/game" \
+            -H "Content-Type: application/json" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -d '{"type":"cleanup"}'

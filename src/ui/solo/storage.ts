@@ -1,3 +1,6 @@
+import type { GameFormat } from '../../game/interests.ts'
+import type { TossupDifficulty } from '../../game/questions/sources.ts'
+
 /** Per-browser conveniences. Storage can be unavailable (private mode), so every call is guarded. */
 
 const SEEN_KEY = 'triviabot.seen'
@@ -5,12 +8,24 @@ const SETTINGS_KEY = 'triviabot.settings'
 const MAX_SEEN = 2000
 
 export interface SavedSettings {
+  format: GameFormat
+  /** Open Trivia DB categories for classic mode. */
   categories: string[]
+  /** QBReader categories for tossup mode. */
+  tossupCategories: string[]
   count: number
   timeLimitSec: number
+  difficulty: TossupDifficulty
 }
 
-export const DEFAULT_SETTINGS: SavedSettings = { categories: [], count: 10, timeLimitSec: 20 }
+export const DEFAULT_SETTINGS: SavedSettings = {
+  format: 'classic',
+  categories: [],
+  tossupCategories: [],
+  count: 10,
+  timeLimitSec: 20,
+  difficulty: 'medium',
+}
 
 function read<T>(key: string, fallback: T): T {
   try {

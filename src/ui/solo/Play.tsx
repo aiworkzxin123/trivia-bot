@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { GameState } from '../game/engine.ts'
-import { displayCategory } from '../game/questions/pool.ts'
+import { questionLimitMs, type GameState } from '../../game/engine.ts'
+import { displayCategory } from '../../game/questions/pool.ts'
+import { capitalize, seconds } from '../../lib/format.ts'
+import { TossupText } from '../parts.tsx'
 
 interface Props {
   game: GameState
@@ -11,14 +13,11 @@ interface Props {
   onQuit: () => void
 }
 
-function seconds(ms: number) {
-  return (ms / 1000).toFixed(1)
-}
-
 export function Play({ game, now, onSubmit, onOverride, onNext, onQuit }: Props) {
   const nextRef = useRef<HTMLButtonElement>(null)
   const question = game.questions[game.index]
-  const limit = game.settings.timeLimitMs
+  const limit = questionLimitMs(game)
+  const tossup = game.settings.format === 'tossup'
   const remaining = Math.max(0, limit - (now - game.questionStartedAt))
   const result = game.phase === 'reveal' ? game.results[game.results.length - 1] : null
 
@@ -51,10 +50,14 @@ export function Play({ game, now, onSubmit, onOverride, onNext, onQuit }: Props)
       <article className="card">
         <div className="card-meta">
           <span className="tag">{displayCategory(question.category)}</span>
-          {question.difficulty && <span className={`tag diff-${question.difficulty}`}>{question.difficulty}</span>}
+          {question.difficulty && !tossup && <span className={`tag diff-${question.difficulty}`}>{question.difficulty}</span>}
           {game.phase === 'question' && <span className="clock">{Math.ceil(remaining / 1000)}s</span>}
         </div>
-        <h2 className="question">{question.text}</h2>
+        {tossup ? (
+          <TossupText text={question.text} elapsedMs={now - game.questionStartedAt} complete={game.phase !== 'question'} />
+        ) : (
+          <h2 className="question">{question.text}</h2>
+        )}
 
         {game.phase === 'question' && (
           // A new key per question and attempt gives a fresh, focused, empty box.
@@ -66,7 +69,7 @@ export function Play({ game, now, onSubmit, onOverride, onNext, onQuit }: Props)
             {game.feedback === 'wrong' && `“${game.given[game.given.length - 1]}” isn't right. ${tries(game.attemptsLeft)} left.`}
             {game.feedback === 'prompt' &&
               `“${game.given[game.given.length - 1]}” is close. ${game.promptText ? capitalize(game.promptText) : 'Can you be more specific?'}`}
-            {!game.feedback && tries(game.attemptsLeft)}
+            {!game.feedback && `${tries(game.attemptsLeft)}${tossup ? ', −50 if wrong' : ''}`}
           </p>
         )}
 
@@ -81,6 +84,7 @@ export function Play({ game, now, onSubmit, onOverride, onNext, onQuit }: Props)
             <p className="answer-line">
               <span className="label">Answer</span> {question.answer}
             </p>
+            {question.sourceNote && <p className="hint">From {question.sourceNote}, via QBReader.</p>}
             {result.given.length > 0 && (
               <p className="answer-line">
                 <span className="label">You said</span> {result.given.join(' · ')}
@@ -113,9 +117,6 @@ export function Play({ game, now, onSubmit, onOverride, onNext, onQuit }: Props)
   )
 }
 
-function capitalize(text: string) {
-  return text.charAt(0).toUpperCase() + text.slice(1)
-}
 
 function tries(n: number) {
   return `${n} ${n === 1 ? 'try' : 'tries'}`

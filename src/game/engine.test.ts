@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildAnswerline } from './answers/answerline.ts'
-import { next, override, startGame, submit, timeout, type Question } from './engine.ts'
+import { next, override, questionLimitMs, startGame, submit, timeout, type Question } from './engine.ts'
+import { planTossup } from './tossup.ts'
 
 function question(id: string, answer: string, category = 'Geography'): Question {
   return { id, text: `Question ${id}?`, category, answer, answerline: buildAnswerline(answer, category) }
@@ -82,5 +83,39 @@ describe('engine', () => {
     s = next(submit(s, 'new zealand', 3000), 4000)
     expect(s.phase).toBe('finished')
     expect(s.results).toHaveLength(2)
+  })
+})
+
+describe('engine in tossup mode', () => {
+  const tossup: Question = {
+    id: 't1',
+    text: 'This city hosts the Easter Rising (*) and is the capital of Ireland.',
+    category: 'History',
+    answer: 'Dublin',
+    answerline: '<b><u>Dublin</u></b>',
+  }
+  const tossupSettings = { timeLimitMs: 20_000, attempts: 1, format: 'tossup' as const }
+
+  it('uses the reading time of the question as its time limit', () => {
+    const s = startGame([tossup], tossupSettings, 0)
+    expect(questionLimitMs(s)).toBe(planTossup(tossup.text).limitMs)
+  })
+
+  it('adds the power bonus for an early correct answer', () => {
+    const s = submit(startGame([tossup], tossupSettings, 0), 'dublin', 500)
+    expect(s.results[0].points).toBeGreaterThan(1000)
+  })
+
+  it('takes 50 points for a wrong answer and ends the question', () => {
+    const s = submit(startGame([tossup], tossupSettings, 0), 'cork', 500)
+    expect(s.phase).toBe('reveal')
+    expect(s.results[0]).toMatchObject({ verdict: 'wrong', points: -50 })
+    expect(s.score).toBe(-50)
+  })
+
+  it('refunds the penalty when a wrong answer is counted', () => {
+    const s = override(submit(startGame([tossup], tossupSettings, 0), 'the irish capital', 500))
+    expect(s.results[0].verdict).toBe('overridden')
+    expect(s.score).toBe(s.results[0].points)
   })
 })

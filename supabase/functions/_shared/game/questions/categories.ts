@@ -1,0 +1,28 @@
+// Copied from src/ by scripts/sync-functions.ts. Edit the original, not this file.
+/** Open Trivia DB category names, as they appear in the question file. */
+export const OPENTDB_CATEGORIES = [
+  'General Knowledge',
+  'Entertainment: Books',
+  'Entertainment: Film',
+  'Entertainment: Music',
+  'Entertainment: Musicals & Theatres',
+  'Entertainment: Television',
+  'Entertainment: Video Games',
+  'Entertainment: Board Games',
+  'Science & Nature',
+  'Science: Computers',
+  'Science: Mathematics',
+  'Mythology',
+  'Sports',
+  'Geography',
+  'History',
+  'Politics',
+  'Art',
+  'Celebrities',
+  'Animals',
+  'Vehicles',
+  'Entertainment: Comics',
+  'Science: Gadgets',
+  'Entertainment: Japanese Anime & Manga',
+  'Entertainment: Cartoon & Animations',
+]

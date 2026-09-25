@@ -36,6 +36,10 @@ describe('judge with Open Trivia DB answers', () => {
     expect(judge(opentdb('Albert Einstein', 'Science & Nature'), 'einstein').result).toBe('prompt')
   })
 
+  it('accepts a typo of the full answer instead of asking for more', () => {
+    expect(judge(opentdb('New Zealand', 'Geography'), 'new zealnd').result).toBe('correct')
+  })
+
   it('accepts a surname in people categories', () => {
     expect(judge(opentdb('Albert Einstein', 'Celebrities'), 'einstein').result).toBe('correct')
   })
@@ -79,5 +83,16 @@ describe('judge with QBReader answerlines', () => {
 
   it('accepts a typo', () => {
     expect(judge(leonardo, 'leonardo da vinchi').result).toBe('correct')
+  })
+})
+
+describe('judge with bracketed QBReader answers', () => {
+  const q = {
+    answer: 'Leonardo da Vinci [accept Leonardo; prompt on da Vinci]',
+    answerline: '<b><u>Leonardo</u></b> da Vinci [accept Leonardo; prompt on da Vinci]',
+  }
+
+  it('matches typos against the main answer, not the directives', () => {
+    expect(judge(q, 'leonardo da vinki').result).toBe('correct')
   })
 })

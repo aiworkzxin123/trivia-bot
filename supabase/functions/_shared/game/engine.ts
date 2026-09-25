@@ -1,3 +1,4 @@
+// Copied from src/ by scripts/sync-functions.ts. Edit the original, not this file.
 /**
  * Single-player classic game as pure state transitions. Every function takes
  * the current time, so the rules can be tested without real timers.

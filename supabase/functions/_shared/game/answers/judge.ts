@@ -1,3 +1,4 @@
+// Copied from src/ by scripts/sync-functions.ts. Edit the original, not this file.
 import checkAnswer from 'qb-answer-checker'
 import { editDistance, normalize, typoAllowance } from './normalize.ts'
 

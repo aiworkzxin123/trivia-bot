@@ -25,7 +25,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run sync:functions -- --check
       - run: npm run build
+        env:
+          # Set by scripts/setup-supabase.sh. Without them the site builds in solo-only mode.
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
